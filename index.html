@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2P将棋 — IPv6優先・サーバーレス対戦</title>
+<style>
+  :root {
+    --board: #e9c07c;
+    --board-line: #8a6d3b;
+    --piece: #f8ead0;
+    --piece-edge: #b08d57;
+    --ink: #2b2118;
+    --accent: #c0392b;
+    --bg: #1d1a24;
+    --panel: #2a2635;
+    --text: #f2ede4;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  }
+  header { padding: 14px 18px 4px; }
+  h1 { margin: 0; font-size: 22px; letter-spacing: .08em; }
+  h1 small { font-size: 12px; color: #b9b2c7; letter-spacing: 0; }
+  #status { padding: 4px 18px 10px; font-size: 14px; color: #ffd98a; min-height: 22px; }
+  #connInfo { padding: 0 18px 8px; font-size: 13px; color: #9fd8a8; display: none; }
+  #connInfo .fam { font-weight: bold; padding: 1px 8px; border-radius: 10px; background: #274d31; color: #c9f5d2; }
+  #connInfo .fam.v4 { background: #5a3b2e; color: #ffd9c2; }
+  .controls { padding: 4px 18px 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    background: #453e5c; color: var(--text); border: 1px solid #6a6191;
+    padding: 8px 14px; border-radius: 8px; font-size: 14px; cursor: pointer;
+  }
+  button:hover { background: #554c74; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: #7a4b21; border-color: #c98d45; }
+  input[type="text"] {
+    background: #171420; color: var(--text); border: 1px solid #6a6191;
+    padding: 8px 10px; border-radius: 8px; font-size: 14px; width: 140px;
+  }
+  main { display: flex; flex-wrap: wrap; gap: 18px; padding: 0 18px 24px; align-items: flex-start; }
+  #boardArea { width: min(94vw, 540px); }
+  .hand {
+    display: flex; align-items: center; gap: 6px; min-height: 46px;
+    padding: 4px 6px; background: var(--panel); border-radius: 8px; margin: 6px 0;
+    flex-wrap: wrap;
+  }
+  .hand .label { font-size: 13px; color: #cfc8de; margin-right: 2px; white-space: nowrap; }
+  .hand .me { color: #ffd98a; font-weight: bold; }
+  #boardWrap { position: relative; width: 100%; aspect-ratio: 1 / 1; }
+  #board {
+    display: grid; grid-template-columns: repeat(9, 1fr); grid-template-rows: repeat(9, 1fr);
+    width: 100%; height: 100%;
+    background: var(--board);
+    border: 3px solid var(--board-line);
+  }
+  .cell {
+    position: relative; border: 1px solid rgba(138, 109, 59, .55);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+  }
+  .cell.lastmove { background: rgba(255, 120, 40, .35); }
+  .cell.selected { background: rgba(64, 160, 255, .4); }
+  .cell .dot {
+    position: absolute; width: 26%; height: 26%; border-radius: 50%;
+    background: rgba(30, 120, 60, .55); pointer-events: none;
+  }
+  .piece {
+    width: 88%; height: 92%;
+    background: var(--piece);
+    clip-path: polygon(50% 0%, 92% 22%, 100% 100%, 0% 100%, 8% 22%);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink); font-weight: bold; line-height: 1.05;
+    font-size: clamp(11px, 3.4vw, 21px);
+    filter: drop-shadow(0 1px 1px rgba(0,0,0,.35));
+    pointer-events: none; text-align: center;
+  }
+  .piece.gote { transform: rotate(180deg); }
+  .piece.promoted { color: var(--accent); }
+  .piece.hand { width: 34px; height: 40px; pointer-events: auto; cursor: pointer; font-size: 15px; }
+  .hand .piece.selected { outline: 3px solid #40a0ff; }
+  .hand .count { font-size: 13px; margin-left: -4px; margin-right: 4px; color: #ffd98a; }
+  .cell .king-check { position: absolute; inset: 0; background: rgba(220, 40, 40, .35); pointer-events: none; }
+  #side { flex: 1; min-width: 240px; max-width: 360px; }
+  #turnBox { background: var(--panel); border-radius: 8px; padding: 10px 12px; font-size: 15px; margin-bottom: 10px; }
+  #kifu {
+    background: var(--panel); border-radius: 8px; padding: 10px 12px;
+    height: 300px; overflow-y: auto; font-size: 13.5px; line-height: 1.7;
+    white-space: pre-wrap; font-family: "Hiragino Mincho ProN", serif;
+  }
+  #promoBox {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(10, 8, 16, .55); gap: 12px; z-index: 5;
+  }
+  #promoBox button { font-size: 17px; padding: 12px 22px; }
+  #resultBox {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(10, 8, 16, .7); z-index: 20;
+  }
+  #resultCard { background: var(--panel); padding: 28px 34px; border-radius: 12px; text-align: center; }
+  #resultText { font-size: 22px; margin-bottom: 16px; }
+  footer { padding: 0 18px 26px; font-size: 12.5px; color: #a49cb8; line-height: 1.8; max-width: 860px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>P2P将棋 <small>— サーバーレス対戦 / IPv6優先 / GitHub Pages対応</small></h1>
+</header>
+<div id="status">対戦方法を選んでください</div>
+<div id="connInfo"></div>
+
+<div class="controls">
+  <button id="btnRandom" class="primary">🌐 ランダム対戦を探す</button>
+  <input type="text" id="roomCode" placeholder="あいことば">
+  <button id="btnRoom">あいことばで対戦</button>
+  <button id="btnLocal">👥 対面2人対戦</button>
+  <button id="btnCpu">🤖 CPUと練習</button>
+  <button id="btnDisconnect" disabled>切断</button>
+  <button id="btnResign" disabled>投了</button>
+</div>
+
+<main>
+  <div id="boardArea">
+    <div class="hand" id="handTop"></div>
+    <div id="boardWrap">
+      <div id="board"></div>
+      <div id="promoBox">
+        <button id="btnPromote">成る</button>
+        <button id="btnNoPromote">成らない</button>
+      </div>
+    </div>
+    <div class="hand" id="handBottom"></div>
+  </div>
+  <div id="side">
+    <div id="turnBox">待機中</div>
+    <div id="kifu"></div>
+  </div>
+</main>
+
+<div id="resultBox">
+  <div id="resultCard">
+    <div id="resultText"></div>
+    <button id="btnRematch">再戦する</button>
+    <button id="btnCloseResult">盤面を見る</button>
+  </div>
+</div>
+
+<footer>
+  仕組み：マッチングと接続の取り次ぎ（シグナリング）には公開MQTTブローカー（EMQX / HiveMQ の公開ブローカー）を使い、
+  対戦データは WebRTC DataChannel で端末同士が直接やり取りします（ゲームサーバーなし）。
+  IPv6優先：自分のSDP内のICE候補を IPv6 から並べ替え、IPv6候補の優先度を高く書き換えて相手に渡すことで、
+  接続ペアの選択をIPv6へ誘導します。ブラウザのICE候補そのものを強制はできないため、
+  実際に選ばれた経路は接続後に画面上部へ表示します（ご自宅がMAP-E等のIPv6ネイティブ環境だとIPv6直結になりやすい構成です）。
+  対応ルール：二歩・行き場のない駒・打ち歩詰め禁止、王手/詰み判定、千日手（通常は引き分け、連続王手の千日手は反則負け）。
+  入玉宣言法は未対応。NATの組み合わせによっては直結できない場合があります（TURN未使用）。
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+<script src="shogi.js"></script>
+<script src="net.js"></script>
+<script>
+(function () {
+'use strict';
+
+var state = Shogi.initialState();
+var mode = 'idle';          // idle | online | local | cpu
+var myColor = 1;            // online時: 自分の手番（1=先手, -1=後手）
+var humanColor = 1;         // cpu時: 人間=先手
+var perspective = 1;        // 画面下側に表示する側
+var selected = null;        // {type:'board', idx} | {type:'hand', piece}
+var legalCache = [];
+var lastMove = null;
+var gameOver = false;
+var repHistory = [];        // {key, mover, gaveCheck}
+var kifuList = [];
+var net = null;
+var pendingPromo = null;    // {moves:[promote版, 通常版]}
+var audioCtx = null;
+
+var $ = function (id) { return document.getElementById(id); };
+var boardEl = $('board'), statusEl = $('status'), connEl = $('connInfo');
+
+function setStatus(t) { statusEl.textContent = t; }
+
+function playClick() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 1200; o.type = 'sine';
+    g.gain.setValueAtTime(0.08, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.07);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + 0.08);
+  } catch (e) {}
+}
+
+// 表示座標 <-> 盤面idx の変換（perspective=-1 のとき盤を反転）
+function dispToIdx(dx, dy) {
+  var bx = perspective === 1 ? dx : 8 - dx;
+  var by = perspective === 1 ? dy : 8 - dy;
+  return by * 9 + bx;
+}
+function idxToDisp(idx) {
+  var bx = idx % 9, by = (idx / 9) | 0;
+  return {
+    dx: perspective === 1 ? bx : 8 - bx,
+    dy: perspective === 1 ? by : 8 - by
+  };
+}
+
+function currentLegal() { return legalCache; }
+
+function refreshLegal() {
+  legalCache = gameOver ? [] : Shogi.legalMoves(state);
+}
+
+function isMyTurn() {
+  if (gameOver) return false;
+  if (mode === 'online') return state.turn === myColor;
+  if (mode === 'cpu') return state.turn === humanColor;
+  if (mode === 'local') return true;
+  return false;
+}
+
+function render() {
+  // --- 盤面 ---
+  boardEl.innerHTML = '';
+  var checkSide = 0;
+  if (!gameOver) {
+    if (Shogi.inCheck(state, state.turn)) checkSide = state.turn;
+  }
+  var kingIdx = checkSide !== 0 ? Shogi.kingPos(state, checkSide) : -1;
+  var targets = [];
+  if (selected) {
+    targets = currentLegal().filter(function (m) {
+      return selected.type === 'board' ? (m.from === selected.idx && !m.drop)
+                                       : (m.drop && m.piece === selected.piece);
+    }).map(function (m) { return m.to; });
+  }
+  for (var dy = 0; dy < 9; dy++) {
+    for (var dx = 0; dx < 9; dx++) {
+      var idx = dispToIdx(dx, dy);
+      var cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.idx = idx;
+      if (lastMove && lastMove.to === idx) cell.classList.add('lastmove');
+      if (selected && selected.type === 'board' && selected.idx === idx) cell.classList.add('selected');
+      if (idx === kingIdx) {
+        var warn = document.createElement('div');
+        warn.className = 'king-check';
+        cell.appendChild(warn);
+      }
+      var v = state.board[idx];
+      if (v !== 0) {
+        var p = document.createElement('div');
+        var code = Math.abs(v);
+        p.className = 'piece' + ((v > 0 ? 1 : -1) !== perspective ? ' gote' : '') + (Shogi.isPromoted(code) ? ' promoted' : '');
+        p.textContent = Shogi.PIECE_NAMES_FULL[code];
+        if (Shogi.PIECE_NAMES_FULL[code].length >= 2) p.style.fontSize = 'clamp(9px, 2.6vw, 16px)';
+        cell.appendChild(p);
+      }
+      if (targets.indexOf(idx) >= 0) {
+        var dot = document.createElement('div');
+        dot.className = 'dot';
+        cell.appendChild(dot);
+      }
+      cell.addEventListener('click', onCellClick);
+      boardEl.appendChild(cell);
+    }
+  }
+  renderHand($('handTop'), -perspective, '後手');
+  renderHand($('handBottom'), perspective, '先手');
+  // --- 手番表示 ---
+  var tb = $('turnBox');
+  if (gameOver) {
+    tb.textContent = '対局終了';
+  } else if (mode === 'idle') {
+    tb.textContent = '待機中 — 対戦方法を選んでください';
+  } else {
+    var turnName = state.turn === 1 ? '先手' : '後手';
+    var mine = isMyTurn();
+    tb.textContent = (state.moveCount + 1) + '手目：' + turnName + 'の番' +
+      (mode === 'online' ? (mine ? '（あなた）' : '（相手）') : '') +
+      (checkSide !== 0 ? '　王手！' : '');
+  }
+  // --- 棋譜 ---
+  $('kifu').textContent = kifuList.join('\n');
+  $('kifu').scrollTop = $('kifu').scrollHeight;
+}
+
+function renderHand(el, side, label) {
+  el.innerHTML = '';
+  var lab = document.createElement('span');
+  lab.className = 'label';
+  var sideName = side === 1 ? '先手' : '後手';
+  var isMe = (mode === 'online' && side === myColor) || (mode === 'cpu' && side === humanColor);
+  lab.innerHTML = sideName + ' 持ち駒' + (isMe ? ' <span class="me">（あなた）</span>' : '');
+  el.appendChild(lab);
+  var hand = state.hands[String(side)];
+  var has = false;
+  Shogi.HAND_TYPES.forEach(function (t) {
+    if (hand[t] <= 0) return;
+    has = true;
+    var p = document.createElement('div');
+    p.className = 'piece hand' + (side !== perspective ? ' gote' : '');
+    if (selected && selected.type === 'hand' && selected.piece === t && state.turn === side) {
+      p.classList.add('selected');
+    }
+    p.textContent = Shogi.PIECE_NAMES[t];
+    p.dataset.piece = t;
+    p.dataset.side = side;
+    p.addEventListener('click', onHandClick);
+    el.appendChild(p);
+    if (hand[t] > 1) {
+      var c = document.createElement('span');
+      c.className = 'count';
+      c.textContent = '×' + hand[t];
+      el.appendChild(c);
+    }
+  });
+  if (!has) {
+    var none = document.createElement('span');
+    none.className = 'label';
+    none.textContent = 'なし';
+    el.appendChild(none);
+  }
+}
+
+function onHandClick(ev) {
+  ev.stopPropagation();
+  if (!isMyTurn()) return;
+  var side = Number(ev.currentTarget.dataset.side);
+  if (side !== state.turn) return;
+  var piece = Number(ev.currentTarget.dataset.piece);
+  if (selected && selected.type === 'hand' && selected.piece === piece) selected = null;
+  else selected = { type: 'hand', piece: piece };
+  render();
+}
+
+function onCellClick(ev) {
+  if (!isMyTurn()) return;
+  var idx = Number(ev.currentTarget.dataset.idx);
+  // 移動先としてクリック
+  if (selected) {
+    var cands = currentLegal().filter(function (m) {
+      if (m.to !== idx) return false;
+      return selected.type === 'board' ? (m.from === selected.idx && !m.drop)
+                                       : (m.drop && m.piece === selected.piece);
+    });
+    if (cands.length === 1) { doMove(cands[0]); return; }
+    if (cands.length >= 2) {
+      // 成る/成らないの選択
+      pendingPromo = cands;
+      $('promoBox').style.display = 'flex';
+      return;
+    }
+  }
+  // 自分の駒を選択
+  var v = state.board[idx];
+  if (v !== 0 && (v > 0 ? 1 : -1) === state.turn) {
+    selected = { type: 'board', idx: idx };
+  } else {
+    selected = null;
+  }
+  render();
+}
+
+$('btnPromote').addEventListener('click', function () {
+  var m = pendingPromo.find(function (x) { return x.promote; });
+  pendingPromo = null;
+  $('promoBox').style.display = 'none';
+  if (m) doMove(m);
+});
+$('btnNoPromote').addEventListener('click', function () {
+  var m = pendingPromo.find(function (x) { return !x.promote; });
+  pendingPromo = null;
+  $('promoBox').style.display = 'none';
+  if (m) doMove(m);
+});
+
+// 指し手を適用（自他共通）
+function applyAndRecord(move, remote) {
+  var kifu = Shogi.moveToKifu(state, move, lastMove);
+  var mover = state.turn;
+  state = Shogi.applyMove(state, move);
+  var gaveCheck = Shogi.inCheck(state, -mover);
+  kifuList.push(state.moveCount + '. ' + kifu);
+  lastMove = move;
+  selected = null;
+  playClick();
+
+  // 千日手記録
+  var key = Shogi.positionKey(state);
+  repHistory.push({ key: key, mover: mover, gaveCheck: gaveCheck });
+  var count = repHistory.filter(function (r) { return r.key === key; }).length +
+    (key === initialKey ? 1 : 0);
+  refreshLegal();
+
+  // 終局判定
+  if (legalCache.length === 0) {
+    endGame(mover, Shogi.inCheck(state, -mover) ? '詰み' : '行き詰まり');
+    return;
+  }
+  if (count >= 4) {
+    // 連続王手の千日手は王手をかけ続けた側の負け
+    var firstIdx = repHistory.findIndex(function (r) { return r.key === key; });
+    var cycle = repHistory.slice(firstIdx);
+    var loser = 0;
+    [1, -1].forEach(function (s) {
+      var mine = cycle.filter(function (r) { return r.mover === s; });
+      if (mine.length > 0 && mine.every(function (r) { return r.gaveCheck; })) loser = s;
+    });
+    if (loser !== 0) endGame(-loser, '連続王手の千日手');
+    else endGame(0, '千日手');
+    return;
+  }
+  render();
+  maybeCpuMove();
+}
+
+var initialKey = Shogi.positionKey(state);
+
+function doMove(move) {
+  if (mode === 'online') {
+    net.send({ t: 'move', from: move.from, to: move.to, piece: move.piece, promote: move.promote, drop: move.drop });
+  }
+  applyAndRecord(move, false);
+}
+
+function maybeCpuMove() {
+  if (mode !== 'cpu' || gameOver || state.turn === humanColor) return;
+  setTimeout(function () {
+    if (gameOver || mode !== 'cpu') return;
+    var moves = Shogi.legalMoves(state);
+    if (moves.length === 0) return;
+    var m = moves[(Math.random() * moves.length) | 0];
+    applyAndRecord(m, false);
+  }, 550);
+}
+
+function endGame(winner, reason) {
+  gameOver = true;
+  refreshLegal();
+  render();
+  var text;
+  if (winner === 0) text = '引き分け（' + reason + '）';
+  else {
+    var wname = winner === 1 ? '先手' : '後手';
+    if (mode === 'online') text = (winner === myColor ? 'あなたの勝ち' : 'あなたの負け') + '（' + reason + '）';
+    else if (mode === 'cpu') text = (winner === humanColor ? 'あなたの勝ち' : 'CPUの勝ち') + '（' + reason + '）';
+    else text = wname + 'の勝ち（' + reason + '）';
+  }
+  $('resultText').textContent = text;
+  $('resultBox').style.display = 'flex';
+  $('btnResign').disabled = true;
+  setStatus('対局終了：' + text);
+}
+
+function resetGame() {
+  state = Shogi.initialState();
+  initialKey = Shogi.positionKey(state);
+  repHistory = [];
+  kifuList = [];
+  lastMove = null;
+  selected = null;
+  gameOver = false;
+  $('resultBox').style.display = 'none';
+  $('btnResign').disabled = mode === 'idle';
+  refreshLegal();
+  render();
+}
+
+// ---------------- ネット対戦 ----------------
+function startOnline() {
+  net = new P2PNet({
+    onStatus: function (t) { setStatus(t); },
+    onPaired: function (info) {
+      myColor = info.initiator ? 1 : -1;   // 接続を始めた側が先手
+      perspective = myColor;
+      resetGame();
+      setStatus('対戦相手が見つかりました。接続を確立しています…');
+    },
+    onOpen: function () {
+      setStatus('対局開始！ あなたは' + (myColor === 1 ? '先手' : '後手') + 'です');
+      $('btnDisconnect').disabled = false;
+      $('btnResign').disabled = false;
+      render();
+    },
+    onMessage: function (obj) { onNetMessage(obj); },
+    onClose: function () {
+      setStatus('相手が切断しました');
+      $('btnDisconnect').disabled = true;
+      if (!gameOver) { gameOver = true; render(); }
+    },
+    onConnInfo: function (info) {
+      connEl.style.display = 'block';
+      var famClass = info.family === 'IPv6' ? '' : ' v4';
+      connEl.innerHTML = '接続経路: <span class="fam' + famClass + '">' + info.family + '</span> ' +
+        '自分 ' + info.localAddr + ' (' + info.localType + ') ⇔ 相手 ' + info.remoteAddr +
+        ' (' + info.remoteType + ') / ' + info.protocol;
+    }
+  });
+}
+
+function onNetMessage(obj) {
+  if (obj.t === 'move') {
+    var m = Shogi.legalMoves(state).find(function (x) {
+      return x.from === obj.from && x.to === obj.to && x.piece === obj.piece &&
+        !!x.promote === !!obj.promote && !!x.drop === !!obj.drop;
+    });
+    if (!m) { setStatus('⚠ 相手の手と盤面が一致しませんでした（同期ずれ）'); return; }
+    applyAndRecord(m, true);
+  } else if (obj.t === 'resign') {
+    endGame(myColor, '相手の投了');
+  } else if (obj.t === 'rematch') {
+    myColor = -myColor;
+    perspective = myColor;
+    net.send({ t: 'rematch-accept' });
+    resetGame();
+    setStatus('再戦開始！ あなたは' + (myColor === 1 ? '先手' : '後手') + 'です');
+  } else if (obj.t === 'rematch-accept') {
+    myColor = -myColor;
+    perspective = myColor;
+    resetGame();
+    setStatus('再戦開始！ あなたは' + (myColor === 1 ? '先手' : '後手') + 'です');
+  }
+}
+
+function leaveOnline() {
+  if (net) { net.disconnect(); net = null; }
+  connEl.style.display = 'none';
+  $('btnDisconnect').disabled = true;
+  $('btnResign').disabled = true;
+}
+
+$('btnRandom').addEventListener('click', function () {
+  leaveOnline();
+  mode = 'online';
+  startOnline();
+  net.seekRandom();
+});
+$('btnRoom').addEventListener('click', function () {
+  var code = $('roomCode').value.trim();
+  if (!code) { setStatus('あいことばを入力してください'); return; }
+  leaveOnline();
+  mode = 'online';
+  startOnline();
+  net.joinRoom(code);
+});
+$('btnLocal').addEventListener('click', function () {
+  leaveOnline();
+  mode = 'local';
+  perspective = 1;
+  resetGame();
+  setStatus('対面2人対戦：同じ画面で交互に指してください');
+});
+$('btnCpu').addEventListener('click', function () {
+  leaveOnline();
+  mode = 'cpu';
+  humanColor = 1;
+  perspective = 1;
+  resetGame();
+  setStatus('CPUと練習：あなたは先手です（CPUはランダムに指します）');
+});
+$('btnDisconnect').addEventListener('click', function () {
+  leaveOnline();
+  mode = 'idle';
+  setStatus('切断しました');
+  render();
+});
+$('btnResign').addEventListener('click', function () {
+  if (gameOver || mode === 'idle') return;
+  if (mode === 'online') {
+    net.send({ t: 'resign' });
+    endGame(-myColor, '投了');
+  } else if (mode === 'cpu') {
+    endGame(-humanColor, '投了');
+  } else {
+    endGame(-state.turn, '投了');
+  }
+});
+$('btnRematch').addEventListener('click', function () {
+  $('resultBox').style.display = 'none';
+  if (mode === 'online' && net) {
+    net.send({ t: 'rematch' });
+    setStatus('再戦を申し込みました…');
+  } else {
+    if (mode === 'cpu') { /* 人間側はそのまま先手 */ }
+    resetGame();
+    maybeCpuMove();
+  }
+});
+$('btnCloseResult').addEventListener('click', function () {
+  $('resultBox').style.display = 'none';
+});
+
+resetGame();
+})();
+</script>
+</body>
+</html>
