@@ -269,38 +269,42 @@ P2PNet.prototype._handleAnswer = function (msg) {
 };
 
 // 実際に選ばれたICEペア（IPv6かどうか）を調べて通知する
+// 確立途中の候補ペアを拾うと両端で表示が食い違うため、成功済み(succeeded)の
+// ペアだけを対象に数秒ポーリングし、同じペアが続いたら最終結果として確定する。
 P2PNet.prototype._reportConnInfo = function () {
   var self = this;
   var tries = 0;
+  var lastPairId = null;
+  var stableCount = 0;
   if (this.statsTimer) clearInterval(this.statsTimer);
   this.statsTimer = setInterval(function () {
     tries++;
-    if (!self.pc || tries > 8) { clearInterval(self.statsTimer); return; }
+    if (!self.pc || tries > 12) { clearInterval(self.statsTimer); return; }
     self.pc.getStats().then(function (stats) {
       var pair = null, local = null, remote = null;
       var byId = {};
       stats.forEach(function (r) { byId[r.id] = r; });
       stats.forEach(function (r) {
-        if (r.type === 'candidate-pair' && r.nominated && (r.state === 'succeeded' || r.state === 'in-progress')) {
+        if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') {
           pair = r;
           local = byId[r.localCandidateId];
           remote = byId[r.remoteCandidateId];
         }
       });
-      if (pair && local && remote) {
-        clearInterval(self.statsTimer);
-        var localAddr = local.address || local.ip || '';
-        var remoteAddr = remote.address || remote.ip || '';
-        var family = isIPv6(localAddr) && isIPv6(remoteAddr) ? 'IPv6'
-          : (isIPv6(localAddr) || isIPv6(remoteAddr) ? 'IPv6/IPv4混在' : 'IPv4');
-        if (self.cb.onConnInfo) {
-          self.cb.onConnInfo({
-            localAddr: localAddr, localType: local.candidateType,
-            remoteAddr: remoteAddr, remoteType: remote.candidateType,
-            protocol: local.protocol, family: family
-          });
-        }
+      if (!pair || !local || !remote) return;
+      if (pair.id === lastPairId) { stableCount++; } else { lastPairId = pair.id; stableCount = 0; }
+      var localAddr = local.address || local.ip || '';
+      var remoteAddr = remote.address || remote.ip || '';
+      var family = isIPv6(localAddr) && isIPv6(remoteAddr) ? 'IPv6'
+        : (isIPv6(localAddr) || isIPv6(remoteAddr) ? 'IPv6/IPv4混在' : 'IPv4');
+      if (self.cb.onConnInfo) {
+        self.cb.onConnInfo({
+          localAddr: localAddr, localType: local.candidateType,
+          remoteAddr: remoteAddr, remoteType: remote.candidateType,
+          protocol: local.protocol, family: family
+        });
       }
+      if (stableCount >= 2) clearInterval(self.statsTimer);
     }).catch(function () {});
   }, 1000);
 };
